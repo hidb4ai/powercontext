@@ -38,6 +38,10 @@ RULES = tomllib.loads((ROOT / ".github/ci-paths.toml").read_text(encoding="utf-8
         (["website/src/app/page.tsx"], {"website"}),
         (["tests/e2e/test_blog_site.py"], {"website", "tests"}),
         (["AGENTS.md", "CONTRIBUTING.md"], set()),
+        (["deploy/helm/powercontext/templates/deployments.yaml"], {"helm"}),
+        (["deploy/helm/powercontext/README.md"], {"helm"}),
+        (["tests/test_helm_chart.py"], {"tests", "helm"}),
+        (["tests/e2e/helm_probe.py"], {"tests", "helm"}),
         (["integrations/pi/plugins/powercontext/index.ts"], {"tests", "pi", "zcode"}),
         (["integrations/kimi-code/plugins/powercontext/skills/context/SKILL.md"], {"tests", "kimi"}),
         (["evaluation/coding/work_continuity/run.py"], {"evaluation"}),
@@ -54,12 +58,23 @@ RULES = tomllib.loads((ROOT / ".github/ci-paths.toml").read_text(encoding="utf-8
         (["tests/native/test_personal_service_lifecycle.py"], {"tests", "native"}),
         (["e2e/bub/compose.yaml"], {"harness"}),
         (["scripts/scan_e2e_evidence.sh"], {"tests", "harness"}),
-        (["scripts/run_atomic_memory_clean_migration.py"], {"tests", "database"}),
+        (["scripts/run_atomic_memory_clean_migration.py"], {"tests", "database", "upgrade"}),
         (["scripts/check_atomic_memory_migration_shards.py"], {"tests", "database"}),
         (["scripts/sync_dsh_plugin_tree.py"], {"tests", "dsh"}),
         (["desktop/ui/src/app/App.tsx"], {"desktop"}),
         (["release/upgrade-support.json"], {"upgrade", "packaging"}),
         ([".github/workflows/desktop.yml"], {"desktop"}),
+        ([".github/workflows/managed-resource-candidates.yml"], {"managed_resources"}),
+        (["scripts/produce_managed_resources.py"], {"managed_resources"}),
+        (["scripts/build_intel_managed_wheel.py"], {"managed_resources"}),
+        (["scripts/build_ops_bundle.py"], {"managed_resources", "upgrade", "packaging"}),
+        (["scripts/ci_ops_bundle_smoke.py"], {"managed_resources", "upgrade"}),
+        (["tests/test_managed_resource_producer.py"], {"tests", "managed_resources"}),
+        (["tests/test_ops_resources.py"], {"tests", "managed_resources"}),
+        (
+            [".github/actions/cache-pnpm/action.yml"],
+            {"tests", "desktop", "website", "dsh", "cindy", "pi", "opencode", "openclaw"},
+        ),
         ([".github/workflows/native-service.yml"], {"native"}),
         ([".github/workflows/kimi-code-acceptance.yml"], {"kimi"}),
         ([".github/workflows/zcode-acceptance.yml"], {"zcode"}),
@@ -120,6 +135,7 @@ def test_shared_runtime_inputs_keep_backend_upgrade_and_consumer_coverage(path: 
         "pi",
         "zcode",
         "cindy",
+        "managed_resources",
     } <= {suite for suite, enabled in selected.items() if enabled}
     assert not selected["release_schema"]
     assert not selected["seekdb_lock"]
@@ -174,6 +190,23 @@ def run_selector(repository: Path, event: str, base: str = "", head: str = "") -
     )
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
     return json.loads(outputs["suites"])
+
+
+@pytest.mark.parametrize(
+    ("path", "required_jobs"),
+    [
+        ("scripts/run_atomic_memory_clean_migration.py", {"seekdb-managed-startup", "upgrade-acceptance"}),
+        (".github/actions/cache-pnpm/action.yml", {"tests", "windows-unit-portability", "cindy-package"}),
+        ("deploy/helm/powercontext/values.yaml", {"helm"}),
+        ("scripts/produce_managed_resources.py", {"managed-resource-candidates"}),
+    ],
+)
+def test_changed_shared_input_requires_its_consumers_in_result_gate(repository, path, required_jobs):
+    base = git(repository, "rev-parse", "HEAD")
+    head = commit(repository, path)
+    run_selector(repository, "pull_request", base, head)
+    outputs = dict(line.split("=", 1) for line in (repository / "outputs.txt").read_text().splitlines())
+    assert required_jobs <= set(json.loads(outputs["required-jobs"]))
 
 
 @pytest.mark.parametrize(

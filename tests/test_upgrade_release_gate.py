@@ -514,6 +514,21 @@ def test_repository_baseline_covers_all_three_databases(configuration, monkeypat
     }
 
 
+def test_upgrade_collection_keeps_failure_evidence_without_starting_after_cancellation():
+    root = Path(__file__).parents[1]
+    jobs = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())["jobs"]
+    collect = jobs["collect"]
+    assert set(collect["needs"]) == {"prepare", "cases"}
+    # Explicit !cancelled() overrides the implicit success() check, so failed
+    # cases still reach evidence collection while superseded runs stop here.
+    assert collect["if"] == (
+        "${{ !cancelled() && needs.prepare.result == 'success' && !inputs.skip_upgrade_acceptance }}"
+    )
+    assert any(step.get("if") == "always()" for step in jobs["cases"]["steps"])
+    verdict = next(step for step in collect["steps"] if "CASE_JOBS_RESULT" in step.get("env", {}))
+    assert verdict["run"] == 'test "$CASE_JOBS_RESULT" = success'
+
+
 def test_upgrade_cases_require_isolated_backends_and_always_clean_up():
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())
@@ -1134,6 +1149,7 @@ def test_parallel_workers_reject_changed_preparation_inputs(parallel_reports, mo
         parallel.write_json(root / gate.MANIFEST, policy)
     elif changed == "checkout":
         monkeypatch.setenv("GITHUB_SHA", "another-commit")
+        monkeypatch.setenv("PC_UPGRADE_SOURCE_SHA", "another-commit")
     else:
         plan = json.loads((prepared / "plan.json").read_text())
         plan["resolved_matrix"]["required_cases"].pop()

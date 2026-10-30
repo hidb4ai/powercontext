@@ -120,6 +120,9 @@ def test_compatibility_and_upgrade_matrices_have_bounded_runner_bursts():
     upgrade = workflow("upgrade-release.yml")["jobs"]["cases"]["strategy"]
     assert int(upgrade["max-parallel"]) <= 3
     assert upgrade["fail-fast"] is False  # Complete upgrade evidence remains mandatory.
+    native = workflow("managed-resource-candidates.yml")["jobs"]["candidate"]["strategy"]
+    assert int(native["max-parallel"]) <= 2
+    assert {row["target"] for row in native["matrix"]["include"]} == {"windows-x86_64", "macos-arm64", "macos-x86_64"}
 
 
 def test_cancelled_or_draft_runs_cannot_start_terminal_runner_jobs():

@@ -19,6 +19,7 @@ ignore = [
 ]
 
 [suites]
+helm = ["deploy/helm/**", "tests/test_helm*.py", "tests/e2e/helm_*.py"]
 tests = [
   "tests/**", "integrations/**", "examples/**", "scripts/generate_js_operations.py",
   "scripts/sync_dsh_plugin_tree.py", "scripts/generate_integration_manifest_docs.py",
@@ -74,6 +75,7 @@ zcode = [
 ]
 kimi = ["integrations/kimi-code/**", "tests/*kimi*", ".github/workflows/kimi-code-acceptance.yml"]
 upgrade = [
+  "scripts/run_atomic_memory_clean_migration.py", "scripts/build_ops_bundle.py",
   "release/**", "scripts/upgrade_*.py", "scripts/ci_legacy_upgrade_rejection.py",
   "scripts/ci_release_smoke.py", "scripts/ci_ops_bundle_smoke.py", "scripts/capture_release_schema.py",
   "tests/release_upgrades/**", "tests/test_upgrade*.py", "tests/test_registered_source_maintenance_cli.py",
@@ -87,6 +89,7 @@ observability = [
   "tests/e2e/*observability*", "tests/builtin/runtime/*worker*", "tests/builtin/runtime/*model_usage*",
 ]
 packaging = [
+  "scripts/build_ops_bundle.py",
   "tests/test_installation.py", "tests/test_upgrade_publication.py", "scripts/ci_role_smoke.py", "release/**",
   ".github/workflows/release.yml", ".github/workflows/build-artifacts.yml",
   ".github/workflows/build-docker.yml", "docker/**",
@@ -94,6 +97,11 @@ packaging = [
 desktop = [
   "desktop/**", "tests/test_desktop_fixture_qualification.py", "website/assets/**",
   ".github/workflows/desktop.yml",
+]
+managed_resources = [
+  "scripts/*managed_resource*", "scripts/build_ops_bundle.py", "scripts/ci_ops_bundle_smoke.py",
+  "scripts/build_intel_managed_wheel.py", "tests/test_managed_resource_producer.py", "tests/test_ops_resources.py",
+  ".github/workflows/managed-resource-candidates.yml",
 ]
 candidate_replay = [
   "src/powercontext/builtin/persistence/**", "src/powercontext/builtin/artifacts/**", "pyproject.toml", "uv.lock",
@@ -127,6 +135,7 @@ patterns = ["src/**", "openapi/**", "pyproject.toml", "uv.lock"]
 suites = [
   "tests", "evaluation", "database", "dify", "hermes", "dsh", "cindy", "pi", "opencode", "openclaw", "opendal",
   "website", "native", "harness", "zcode", "kimi", "upgrade", "observability", "packaging", "desktop",
+  "managed_resources",
 ]
 
 [shared.openapi_guidance]
@@ -143,7 +152,7 @@ suites = ["zcode"]
 
 [shared.node_cache]
 patterns = [".github/actions/cache-pnpm/**"]
-suites = ["desktop", "website", "dsh", "pi", "opencode", "openclaw"]
+suites = ["tests", "desktop", "website", "dsh", "cindy", "pi", "opencode", "openclaw"]
 
 [shared.docs_deploy]
 patterns = [".github/workflows/deploy-docs.yml"]
@@ -156,6 +165,7 @@ suites = ["upgrade", "packaging"]
 # A selected scope must produce successful root jobs, not silent skips.
 # Main's result gate consumes this contract; reusable workflows own their children.
 [checks]
+helm = ["helm"]
 tests = ["tests", "windows-unit-portability"]
 evaluation = ["evaluation-tests"]
 database = ["oceanbase-engine-recovery", "code-seekdb", "atomic-memory-clean-seekdb", "harness-validation"]
@@ -177,6 +187,7 @@ upgrade = ["seekdb-managed-startup", "upgrade-acceptance"]
 observability = ["worker-observability"]
 packaging = ["isolated-installations"]
 desktop = ["desktop-validation"]
+managed_resources = ["managed-resource-candidates"]
 candidate_replay = ["candidate-replay"]
 release_schema = ["release-schema"]
 seekdb_lock = ["seekdb-lock"]

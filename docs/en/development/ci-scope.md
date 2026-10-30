@@ -55,6 +55,10 @@ Ordinary PR Python combinations drop from eight to three, a 62.5% reduction in c
 
 For example, documentation selects website and documentation-contract checks; Cindy changes select Python regression and Cindy-package checks; migrations and shared runtime changes retain relevant real-database and upgrade acceptance. A smaller PR Python matrix does not replace selected real backends with simulations.
 
+Helm charts select deployment-contract checks. Managed resource producers select the Windows x86-64, macOS arm64 and macOS x86-64 candidate builds through Main, after quality and any selected Python tests succeed. Their native build matrix has no independent PR trigger. Shared runtime and dependency changes retain these candidate builds; unrelated website or Desktop UI changes do not start them. Candidate artifacts remain unqualified until the separate resource qualification process accepts them.
+
+Shared helpers select their actual consumers: the clean-migration runner also selects managed-startup and upgrade acceptance; the pnpm cache action also selects the Python test setup and Cindy package. A path filter must follow dependencies, not only directory names.
+
 ## Parallelism and cancellation budgets
 
 | Matrix | Maximum parallel jobs per run | Failure behavior |
@@ -65,8 +69,11 @@ For example, documentation selects website and documentation-contract checks; Ci
 | OceanBase clean-migration shards | 2 | Preserve all shards and completeness checks |
 | Candidate replay | 2 | Preserve every backend result |
 | Historical schema capture | 2 | Preserve every configuration result |
+| Managed resource candidates | 2 | Preserve all three native targets |
 
 `max-parallel` bounds one matrix run, not the repository or organization. Do not place unrelated PRs in a normal concurrency group as a global semaphore: the default group retains only one pending run and replaces other waiting work. Release publication must not share a cancellable PR group.
+
+A concurrency cap does not remove work and can lengthen one PR's completion time. Queue reduction comes from skipping unrelated scopes, eliminating duplicate entries, using the smaller PR compatibility matrix and cancelling superseded runs. Runtime and CI-policy changes still require broad acceptance, so their completion time remains sensitive to organization capacity.
 
 Organization capacity should provide separate pools: reserve capacity for basic checks and Python tests, isolate database/upgrade workloads in a heavy pool, and budget Windows/macOS separately. GitHub larger-runner groups or appropriately isolated ephemeral runners can provide these pools. Create and verify actual group names and capacity before changing `runs-on`; nonexistent labels would only queue indefinitely. Account for other repositories sharing organization capacity.
 
@@ -83,6 +90,8 @@ See GitHub's [concurrency semantics](https://docs.github.com/en/actions/how-tos/
 `CI result` depends on every Main root job. Any failure or cancellation blocks it. Root jobs required by selected scopes must succeed: unexpected skipping or missing results also block. Only explicitly unrelated jobs may skip.
 
 `Upgrade release gate` accepts skipped acceptance only after successful scope selection explicitly excludes upgrades. Selected acceptance must succeed. Cancelled runs allocate no new summary-gate runners; necessary in-job cleanup and diagnostics retain `always()`. Publication still checks the complete upgrade matrix and evidence files independently of path selection.
+
+The upgrade evidence collector runs after ordinary case failures so missing or failed evidence cannot pass; it stops on workflow cancellation. Harness acceptance explicitly checks successful validation with a cancellation-aware condition, so skipping the redundant child scope detector cannot silently skip its SQLite/OceanBase matrix.
 
 ## Clearing an existing backlog
 
