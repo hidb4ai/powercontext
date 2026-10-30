@@ -10,11 +10,11 @@ full = [
   "integrations/opendal/pyproject.toml",
 ]
 
-# These files still receive the always-running quality and license checks.
+# These files still receive the always-running preflight checks.
 ignore = [
   "AGENTS.md", "REVIEW.md", "CONTRIBUTING.md", "GOVERNANCE.md", "LICENSE", "LICENSES/**",
   ".github/ISSUE_TEMPLATE/**", ".github/pull_request_template.md", ".github/CODEOWNERS",
-  ".github/dependabot.yml", ".github/workflows/license-check.yml", ".licenserc.yaml",
+  ".github/dependabot.yml", ".licenserc.yaml",
   "scripts/ci_queue_report.py",
 ]
 
@@ -25,7 +25,7 @@ tests = [
   "scripts/sync_dsh_plugin_tree.py", "scripts/generate_integration_manifest_docs.py",
   "scripts/run_atomic_memory_clean_migration.py", "scripts/scan_e2e_evidence.sh",
   "scripts/check_atomic_memory_migration_shards.py",
-  "scripts/ci_role_smoke.py",
+  "scripts/ci_role_smoke.py", "scripts/ci_installation_roles.py",
   # These evaluator suites still live under the root tests/ directory.
   "evaluation/memory/locomo/**", "evaluation/memory/locomo_plus/**", "evaluation/memory/write_gate/**",
 ]
@@ -90,7 +90,8 @@ observability = [
 ]
 packaging = [
   "scripts/build_ops_bundle.py",
-  "tests/test_installation.py", "tests/test_upgrade_publication.py", "scripts/ci_role_smoke.py", "release/**",
+  "tests/test_installation.py", "tests/test_upgrade_publication.py", "scripts/ci_role_smoke.py",
+  "scripts/ci_installation_roles.py", "tests/test_ci_installation_roles.py", "release/**",
   ".github/workflows/release.yml", ".github/workflows/build-artifacts.yml",
   ".github/workflows/build-docker.yml", "docker/**",
 ]

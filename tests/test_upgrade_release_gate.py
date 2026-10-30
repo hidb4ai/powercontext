@@ -450,7 +450,7 @@ def test_publishing_jobs_require_upgrade_acceptance_unless_manually_bypassed():
     assert verdict["name"] == "Upgrade release gate"
     assert "!cancelled()" in verdict["if"]
     dependencies = verdict["needs"]
-    assert {"changes", "upgrade-acceptance"} <= set([dependencies] if isinstance(dependencies, str) else dependencies)
+    assert {"quality", "upgrade-acceptance"} <= set([dependencies] if isinstance(dependencies, str) else dependencies)
     assert not verdict.get("continue-on-error")
     assert all(not step.get("continue-on-error") for step in verdict["steps"])
 

@@ -85,11 +85,13 @@ RULES = tomllib.loads((ROOT / ".github/ci-paths.toml").read_text(encoding="utf-8
         ),
         (["tests/e2e/test_worker_otlp.py"], {"tests", "observability"}),
         (["scripts/ci_role_smoke.py"], {"tests", "packaging"}),
+        (["scripts/ci_installation_roles.py"], {"tests", "packaging"}),
+        (["tests/test_ci_installation_roles.py"], {"tests", "packaging"}),
         (["scripts/capture_release_schema.py"], {"upgrade", "release_schema"}),
         (["scripts/probe_seekdb_migration_lock.py"], {"seekdb_lock"}),
         (["tests/test_database_migration_cli.py"], {"tests", "database", "upgrade"}),
         ([".github/workflows/skill-guidance.yml"], {"skill_guidance"}),
-        ([".github/workflows/license-check.yml"], set()),
+        ([".licenserc.yaml"], set()),
         (["integrations/bub/src/powercontext_bub/__init__.py"], {"tests", "harness"}),
         (
             ["docs/en/docs/quickstart.md", "integrations/opencode/package.json"],
@@ -398,8 +400,6 @@ def test_selector_cli_exposes_full_matrix_and_required_jobs_on_missing_baseline(
     assert set(matrix["python-version"]) == {"3.11", "3.12", "3.13", "3.14"}
     assert set(matrix["suite"]) == {"unit", "e2e"}
     assert set(json.loads(outputs["required-jobs"])) == {job for jobs in RULES["checks"].values() for job in jobs} | {
-        "changes",
         "quality",
-        "license-check",
         "upgrade-release-gate",
     }

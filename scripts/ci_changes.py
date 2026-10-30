@@ -161,7 +161,7 @@ def main() -> None:
     if rules["checks"].keys() != selected.keys():
         raise ValueError("Every CI scope must declare its required result jobs")  # noqa: TRY003
     required = sorted(
-        {"changes", "quality", "license-check", "upgrade-release-gate"}
+        {"quality", "upgrade-release-gate"}
         | {job for suite, jobs in rules["checks"].items() if selected[suite] for job in jobs}
     )
     print(json.dumps(selected, indent=2))

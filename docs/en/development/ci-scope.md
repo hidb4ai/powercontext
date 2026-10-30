@@ -4,26 +4,23 @@ CI must validate affected behavior while controlling duplicate work, wasted work
 
 ## Entry points and admission
 
-Ordinary PRs targeting `master` and pushes to `master` start only `Main`. It selects the complete change scope once and calls existing reusable workflows. Called workflows reuse this selection without allocating another detector runner. The Desktop `codex/desktop-preview` branch and workflow-specific manual diagnostics retain independent entry points.
+Ordinary PRs targeting `master` and pushes to `master` start only `Main`. Its `CI preflight` job checks out the repository once and runs scope selection, license validation, quality checks and API-contract validation as separate steps on one runner. It then calls existing reusable workflows with the complete change scope. Called workflows reuse this selection without allocating another detector runner; directly invoked manual workflows retain their own scope detection. The Desktop `codex/desktop-preview` branch and workflow-specific manual diagnostics retain independent entry points.
 
 ```mermaid
 flowchart TD
-  E[PR / trunk push / daily / manual] --> S[One scope selection]
-  E --> L[License]
-  L --> Q[Quality and API contract]
-  S --> T[Selected Python tests]
-  Q --> T
+  E[PR / trunk push / daily / manual] --> Q[CI preflight: scope, license, quality and API contract]
+  Q --> T[Selected Python tests]
   Q --> W[Selected website and documentation checks]
   T --> H[Selected backend, upgrade, platform and host acceptance]
   H --> U[Upgrade release gate]
-  S --> R[CI result]
+  Q --> R[CI result]
   T --> R
   W --> R
   H --> R
   U --> R
 ```
 
-License or quality failure prevents downstream tests and heavy work from starting. Python-test failure prevents dependent backend, upgrade, platform and host acceptance from expanding. Website and documentation checks can run alongside Python tests after quality succeeds. Skipping downstream work never turns the original failure green.
+Preflight failure prevents downstream tests and heavy work from starting. Python-test failure prevents dependent backend, upgrade, platform and host acceptance from expanding. Website and documentation checks can run alongside Python tests after preflight succeeds. Skipping downstream work never turns the original failure green. Grouping the four preflight checks in one job removes two runner allocations per ordinary validation run and avoids a separate runner wait between license and quality checks; each check retains its own step result and logs.
 
 Draft PRs allocate no automatic CI runners. Marking a PR ready validates its complete diff; conversion back to draft cancels the old run. Only the latest automatic run survives for each PR. Schedule, push and manual entry points use separate concurrency groups so diagnostics do not cancel trunk or daily validation. These groups replace obsolete work for the same change; they are not cross-PR resource queues.
 
@@ -40,6 +37,8 @@ Draft PRs allocate no automatic CI runners. Marking a PR ready validates its com
 | Published release | Independent installed-package and publication checks | Complete upgrade evidence and validated publication bytes; PR scope cannot bypass acceptance |
 
 Ordinary PR Python combinations drop from eight to three, a 62.5% reduction in combination count. This is not a measured reduction in runner minutes or queue latency. Dependency and CI-policy changes keep the full matrix, so a PR editing CI itself may still run eight combinations.
+
+When packaging is selected, installation validation uses two jobs, one each for Python 3.11 and 3.14. Each job builds its wheel once and verifies all four extra sets: `builtin`, `cli`, `builtin,cli` and `server,cli`. Each role gets its own virtual environment, application state and temporary directory, and runs against the installed wheel with checkout imports excluded. The CLI role also verifies that adding unrelated SQLAlchemy and FastAPI packages does not enable optional roles. Every role produces a result; any failed role fails its job. All eight Python/role combinations remain covered while six runner allocations and six duplicate wheel builds are removed. The job-count reduction does not establish a queue-latency or throughput improvement without measurements.
 
 `ci:full` is read from opened/synchronize/reopened/ready PR events. Adding the label to a running PR does not dispatch another workflow: update the branch or reopen the PR afterward. Manual Main uses the repository ref selected in Actions. For a fork PR, select its branch in the source repository; a successful default-branch run is not evidence for the PR head.
 
@@ -64,7 +63,7 @@ Shared helpers select their actual consumers: the clean-migration runner also se
 | Matrix | Maximum parallel jobs per run | Failure behavior |
 | --- | --- | --- |
 | Python tests | 3 | Stop remaining combinations after the first failure |
-| Isolated installation roles | 2 | Stop remaining combinations after the first failure |
+| Isolated installations, one job per Python version | 2 | Attempt every role within a job; a failed job cancels the other Python job if still running |
 | Installed-release upgrades | 3 | Preserve all cases and complete evidence collection |
 | OceanBase clean-migration shards | 2 | Preserve all shards and completeness checks |
 | Candidate replay | 2 | Preserve every backend result |
@@ -73,7 +72,7 @@ Shared helpers select their actual consumers: the clean-migration runner also se
 
 `max-parallel` bounds one matrix run, not the repository or organization. Do not place unrelated PRs in a normal concurrency group as a global semaphore: the default group retains only one pending run and replaces other waiting work. Release publication must not share a cancellable PR group.
 
-A concurrency cap does not remove work and can lengthen one PR's completion time. Queue reduction comes from skipping unrelated scopes, eliminating duplicate entries, using the smaller PR compatibility matrix and cancelling superseded runs. Runtime and CI-policy changes still require broad acceptance, so their completion time remains sensitive to organization capacity.
+A concurrency cap does not remove work and can lengthen one PR's completion time. Queue reduction comes from skipping unrelated scopes, eliminating duplicate entries, grouping short checks on one runner, reusing installation builds, using the smaller PR compatibility matrix and cancelling superseded runs. Runtime and CI-policy changes still require broad acceptance, so their completion time remains sensitive to organization capacity.
 
 Organization capacity should provide separate pools: reserve capacity for basic checks and Python tests, isolate database/upgrade workloads in a heavy pool, and budget Windows/macOS separately. GitHub larger-runner groups or appropriately isolated ephemeral runners can provide these pools. Create and verify actual group names and capacity before changing `runs-on`; nonexistent labels would only queue indefinitely. Account for other repositories sharing organization capacity.
 
@@ -81,7 +80,7 @@ These rollout tasks require organization administration. Workflow code does not 
 
 1. Inspect organization Settings → Actions → Runners for active jobs, total/OS limits and other repositories' usage. Check billing, budgets and service availability as well.
 2. Create and qualify runner groups before migrating workflows. A starting allocation of roughly 20% basic checks, 40% ordinary tests and 40% heavy acceptance can be evaluated against measured minutes; it is not a capacity configuration already applied by this change.
-3. After merging and validating the workflows, require the stable `CI result` check while preserving existing review requirements. Reusable workflow check names acquire Main caller prefixes, so external status-check rules must be reconciled.
+3. After merging and validating the workflows, require the stable `CI result` check while preserving existing review requirements. The quality job's displayed check name is `CI preflight`; license and scope validation are its steps, rather than separate status checks. Replace required-check rules that still name the old quality, license or scope checks. Reusable workflow check names acquire Main caller prefixes, so external status-check rules must be reconciled.
 
 See GitHub's [concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) and [organization job and capacity monitoring](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/view-current-jobs).
 
@@ -89,7 +88,7 @@ See GitHub's [concurrency semantics](https://docs.github.com/en/actions/how-tos/
 
 `CI result` depends on every Main root job. Any failure or cancellation blocks it. Root jobs required by selected scopes must succeed: unexpected skipping or missing results also block. Only explicitly unrelated jobs may skip.
 
-`Upgrade release gate` accepts skipped acceptance only after successful scope selection explicitly excludes upgrades. Selected acceptance must succeed. Cancelled runs allocate no new summary-gate runners; necessary in-job cleanup and diagnostics retain `always()`. Publication still checks the complete upgrade matrix and evidence files independently of path selection.
+`Upgrade release gate` accepts skipped acceptance only after successful preflight explicitly excludes upgrades. Selected acceptance must succeed. Cancelled runs allocate no new summary-gate runners; necessary in-job cleanup and diagnostics retain `always()`. Publication still checks the complete upgrade matrix and evidence files independently of path selection.
 
 The upgrade evidence collector runs after ordinary case failures so missing or failed evidence cannot pass; it stops on workflow cancellation. Harness acceptance explicitly checks successful validation with a cancellation-aware condition, so skipping the redundant child scope detector cannot silently skip its SQLite/OceanBase matrix.
 

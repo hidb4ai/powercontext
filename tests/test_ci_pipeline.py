@@ -78,8 +78,49 @@ def test_selected_scopes_have_a_complete_terminal_result_contract():
     main = workflow("master.yml")["jobs"]
     assert RULES["checks"].keys() == RULES["suites"].keys()
     covered = {job for jobs in RULES["checks"].values() for job in jobs}
-    assert covered | {"changes", "quality", "license-check", "upgrade-release-gate", "ci-result"} == set(main)
+    assert covered | {"quality", "upgrade-release-gate", "ci-result"} == set(main)
     assert set(main["ci-result"]["needs"]) == set(main) - {"ci-result"}
+
+
+def test_preflight_uses_one_runner_and_keeps_all_admission_checks_mandatory():
+    jobs = workflow("master.yml")["jobs"]
+    assert {name for name, job in jobs.items() if not job.get("needs")} == {"quality"}
+    preflight = jobs["quality"]
+    assert "!github.event.pull_request.draft" in preflight["if"]
+    assert not preflight.get("continue-on-error")
+    steps = preflight["steps"]
+    checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+    assert len(checkouts) == 1
+    assert checkouts[0]["with"]["fetch-depth"] == 0
+    selection = next(step for step in steps if step.get("id") == "select")
+    license_check = next(step for step in steps if step.get("uses", "").startswith("apache/skywalking-eyes/header@"))
+    quality = next(step for step in steps if step.get("run") == "make check")
+    contract = next(step for step in steps if step.get("run") == "make contract-test")
+    assert selection["env"]["CI_BASELINE_WORKFLOW"] == "master.yml"
+    assert license_check["with"] == {"config": ".licenserc.yaml", "mode": "check"}
+    for step in (selection, license_check, quality, contract):
+        assert not step.get("continue-on-error")
+        assert "if" not in step  # A preceding failure prevents further admission work.
+    for output in ("suites", "test-matrix", "required-jobs"):
+        assert preflight["outputs"][output] == "${{ steps.select.outputs." + output + " }}"
+    for name, job in jobs.items():
+        if name not in {"quality", "upgrade-release-gate", "ci-result"}:
+            assert "quality" in job["needs"]
+            assert "needs.quality.result == 'success'" in job["if"]
+
+
+def test_installation_roles_use_only_two_python_runners():
+    job = workflow("master.yml")["jobs"]["isolated-installations"]
+    assert job["strategy"]["matrix"] == {"python-version": ["3.11", "3.14"]}
+    build = [step for step in job["steps"] if "uv build --wheel" in step.get("run", "")]
+    assert len(build) == 1
+    verify = next(step for step in job["steps"] if "ci_installation_roles.py" in step.get("run", ""))
+    assert not verify.get("continue-on-error")
+    assert "if" not in verify
+    reports = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert reports["if"] == "always()"
+    assert "summary.json" in reports["with"]["path"]
+    assert "logs/*.log" in reports["with"]["path"]
 
 
 def test_automatic_host_workflows_share_one_scope_and_admission_gate():
@@ -92,19 +133,14 @@ def test_automatic_host_workflows_share_one_scope_and_admission_gate():
             assert "pull_request" not in events, path.name
             assert "master" not in events.get("push", {}).get("branches", []), path.name
     for job in main.values():
-        if (
-            not job.get("uses", "").endswith(".yml")
-            or "ci-changes" in job["uses"]
-            or "upgrade-release" in job["uses"]
-            or "license-check" in job["uses"]
-        ):
+        if not job.get("uses", "").endswith(".yml") or "ci-changes" in job["uses"] or "upgrade-release" in job["uses"]:
             continue
         child = workflow(Path(job["uses"]).name)
         assert "pull_request" not in child["on"]
         assert "schedule" not in child["on"]
         assert "master" not in child["on"].get("push", {}).get("branches", [])
-        assert job["with"]["suites"] == "${{ needs.changes.outputs.suites }}"
-        assert {"changes", "quality", "tests"} <= set(job["needs"])
+        assert job["with"]["suites"] == "${{ needs.quality.outputs.suites }}"
+        assert {"quality", "tests"} <= set(job["needs"])
         assert "needs.quality.result == 'success'" in job["if"]
         assert "needs.tests.result" in job["if"]
         assert child["jobs"]["changes"]["if"] == "${{ inputs.suites == '' }}"
@@ -133,6 +169,7 @@ def test_cancelled_or_draft_runs_cannot_start_terminal_runner_jobs():
     assert "converted_to_draft" in workflow("master.yml")["on"]["pull_request"]["types"]
 
 
+@pytest.mark.parametrize("selected_job", ["quality", "harness-validation"])
 @pytest.mark.parametrize(
     ("selected_result", "unselected_result", "passes"),
     [
@@ -143,12 +180,14 @@ def test_cancelled_or_draft_runs_cannot_start_terminal_runner_jobs():
         ("success", "failure", False),
     ],
 )
-def test_actual_ci_result_script_rejects_missing_selected_acceptance(selected_result, unselected_result, passes):
+def test_actual_ci_result_script_rejects_missing_selected_acceptance(
+    selected_job, selected_result, unselected_result, passes
+):
     script = workflow("master.yml")["jobs"]["ci-result"]["steps"][0]["run"]
     script = script.split("<<'PYTHON'\n", 1)[1].rsplit("PYTHON", 1)[0]
-    required = ["changes", "quality", "license-check", "upgrade-release-gate", "harness-validation"]
+    required = ["quality", "upgrade-release-gate", "harness-validation"]
     results = {job: {"result": "success"} for job in required}
-    results["harness-validation"]["result"] = selected_result
+    results[selected_job]["result"] = selected_result
     results["desktop-validation"] = {"result": unselected_result}
     run = subprocess.run(
         [sys.executable, "-c", script],

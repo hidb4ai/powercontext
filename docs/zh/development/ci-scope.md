@@ -4,26 +4,23 @@ CI 的目标是让每次变更获得必要的验证，同时控制重复工作�
 
 ## 入口和执行顺序
 
-面向 `master` 的普通 PR 和 `master` push 只启动 `Main`。它调用现有工作流，统一计算一次完整变更范围；被调用工作流复用结果，不再分别分配 runner 检测变更。Desktop 的 `codex/desktop-preview` 分支和各工作流手动诊断入口仍可独立运行。
+面向 `master` 的普通 PR 和 `master` push 只启动 `Main`。其中 `CI preflight` 任务只检出一次仓库，在同一 runner 上分别执行范围检测、许可证、质量和 API 合约检查，再将完整变更范围传给现有可复用工作流。被调用工作流复用结果，不再分别分配 runner 检测变更；直接手动运行子工作流时仍自行检测范围。Desktop 的 `codex/desktop-preview` 分支和各工作流手动诊断入口仍可独立运行。
 
 ```mermaid
 flowchart TD
-  E[PR / 主干 push / 每日 / 手动] --> S[一次变更检测]
-  E --> L[License]
-  L --> Q[质量和 API 合约]
-  S --> T[选中的 Python 测试]
-  Q --> T
+  E[PR / 主干 push / 每日 / 手动] --> Q[CI preflight: 范围、许可证、质量和 API 合约]
+  Q --> T[选中的 Python 测试]
   Q --> W[选中的网站与文档检查]
   T --> H[选中的后端、升级、平台和宿主验收]
   H --> U[Upgrade release gate]
-  S --> R[CI result]
+  Q --> R[CI result]
   T --> R
   W --> R
   H --> R
   U --> R
 ```
 
-License 或质量检查失败后，不展开后续测试和重型任务；Python 测试失败后，不展开依赖它们的后端、升级、平台和宿主任务。网站和文档检查可以在质量检查后与 Python 测试并行。失败保留在最终状态中，不因跳过后续任务而变绿。
+前置检查失败后，不展开后续测试和重型任务；Python 测试失败后，不展开依赖它们的后端、升级、平台和宿主任务。网站和文档检查可以在前置检查成功后与 Python 测试并行。失败保留在最终状态中，不因跳过后续任务而变绿。四项前置检查合并为一个任务，每次常规验证减少两次 runner 分配，许可证和质量检查之间也无需再次排队；每项检查仍有独立的步骤结果和日志。
 
 草稿 PR 不分配自动 CI runner。标记为 ready 时验证完整 PR；转回 draft 会取消旧运行。每个 PR 只保留最新一次自动运行。定时、push、手动入口使用不同的并发组，避免手动诊断取消主干或每日验证。并发组中的取消机制用于淘汰同一变更的旧运行，不作为跨 PR 的资源队列。
 
@@ -40,6 +37,8 @@ License 或质量检查失败后，不展开后续测试和重型任务；Python
 | 正式发布 | 独立的安装包与发布验收 | 完整升级证据、汇总与发布字节绑定；不受 PR 路径跳过影响 |
 
 普通 PR 的 Python 测试组合数由 8 降至 3，减少 62.5%。这是组合数量的变化，不是已经测得的 runner 分钟或等待时间降幅。依赖和 CI 策略变更保持全矩阵，因此修改 CI 的 PR 本身可能仍运行 8 个组合。
+
+安装验证在 packaging 范围选中时运行两个任务，分别使用 Python 3.11 和 3.14。每个任务只构建一次 wheel，依次验证 `builtin`、`cli`、`builtin,cli`、`server,cli` 四种 extras。每个角色使用独立的虚拟环境、应用状态和临时目录，针对已安装 wheel 验证，排除 checkout 源码导入。CLI 角色还检查安装无关的 SQLAlchemy、FastAPI 包后不会启用可选角色。各角色分别产生结果，任何角色失败都会使所属任务失败。全部八个 Python/角色组合仍受验证，同时减少六次 runner 分配和六次重复 wheel 构建。任务数量减少不代表已测得等待时间或吞吐量改善。
 
 `ci:full` 在 PR 的 opened/synchronize/reopened/ready 事件中读取。给一个正在运行的 PR 添加标签不会再触发一套流水线；需要随后更新提交或重新打开 PR。手动 Main 使用 Actions 界面选择的仓库内 ref；fork PR 应在其来源仓库选择对应分支，不能把默认分支的通过结果当成 PR head 的通过结果。
 
@@ -64,7 +63,7 @@ Helm chart 改动选择部署合约检查。托管资源生产器通过 Main 选
 | 矩阵 | 每次运行的最大并发 | 失败策略 |
 | --- | --- | --- |
 | Python 测试 | 3 | 首个失败后停止其余组合 |
-| 隔离安装角色 | 2 | 首个失败后停止其余组合 |
+| 隔离安装，每个 Python 版本一个任务 | 2 | 单个任务尝试全部角色；任务失败后取消尚未结束的另一个 Python 任务 |
 | 安装发布升级 | 3 | 保留全部用例与证据汇总 |
 | OceanBase 干净迁移分片 | 2 | 保留全部分片与完整性检查 |
 | Candidate replay | 2 | 保留所有后端结果 |
@@ -73,7 +72,7 @@ Helm chart 改动选择部署合约检查。托管资源生产器通过 Main 选
 
 `max-parallel` 只限制一条矩阵运行，不限制整个仓库或组织。不能把多个 PR 放进一个普通 concurrency 组来模拟全局 semaphore：默认组只保留一个 pending 项，会替换其他 PR 的等待任务。正式发布也不能与普通 PR 共用取消组。
 
-并发上限不会减少工作总量，还可能延长单个 PR 的完成时间。减少排队主要依靠跳过无关范围、消除重复入口、缩小普通 PR 的兼容矩阵，以及取消被新提交替代的运行。运行时和 CI 策略改动仍需广泛验收，完成时间依然受组织可用容量影响。
+并发上限不会减少工作总量，还可能延长单个 PR 的完成时间。减少排队主要依靠跳过无关范围、消除重复入口、让短检查共用 runner、复用安装构建、缩小普通 PR 的兼容矩阵，以及取消被新提交替代的运行。运行时和 CI 策略改动仍需广泛验收，完成时间依然受组织可用容量影响。
 
 组织层应按实际 runner 并发和 OS 配额建立独立容量池：基础检查与 Python 测试优先保留容量，数据库/升级使用隔离的重型池，Windows/macOS 使用独立平台预算。需要时采用 GitHub larger runner 的 runner group 或有明确隔离边界的临时 runner；具体名称和容量要在组织侧创建后才能写入 `runs-on`，不能在工作流里填写不存在的标签。容量不足应按组织全体仓库核算，不只观察本仓库。
 
@@ -81,7 +80,7 @@ Helm chart 改动选择部署合约检查。托管资源生产器通过 Main 选
 
 1. 在组织 Settings → Actions → Runners 检查实际活跃任务、并发上限、OS 上限及其他仓库占用；同时核查预算、账单和服务状态。
 2. 若需要容量隔离，先创建并验证 runner group，再迁移工作流。初始配比可按基础检查/普通测试/重型后端约 20%/40%/40% 试运行，根据实际分钟数调整；这不是当前已配置的容量。
-3. 工作流合并并验证后，将稳定的 `CI result` 配置为合并必需检查，同时保留现有审批要求。工作流改为可复用后，部分检查名称会带 Main 调用任务前缀，外部规则必须同步核对。
+3. 工作流合并并验证后，将稳定的 `CI result` 配置为合并必需检查，同时保留现有审批要求。quality 任务显示的检查名称为 `CI preflight`，许可证和范围检测是其内部步骤，不再提供独立状态检查；仍要求旧 quality、许可证或范围检查名称的规则需要替换。工作流改为可复用后，部分检查名称会带 Main 调用任务前缀，外部规则必须同步核对。
 
 GitHub 语义参见 [concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) 和 [当前任务与组织容量](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/view-current-jobs)。
 
@@ -89,7 +88,7 @@ GitHub 语义参见 [concurrency](https://docs.github.com/en/actions/how-tos/wri
 
 `CI result` 依赖 Main 的全部根任务：任何失败或取消都会阻断；被选中范围对应的根任务必须成功，意外 skipped 或缺失同样阻断。仅明确无关的任务允许跳过。
 
-`Upgrade release gate` 只在范围检测成功且明确未选择升级时接受 skipped。选中的升级必须成功。旧运行被取消后，汇总门禁不会再分配 runner；任务内部的必要清理和诊断仍保留 `always()`。升级发布继续检查全矩阵和证据文件，不能用 CI 路径判定替代发布验收。
+`Upgrade release gate` 只在前置检查成功且明确未选择升级时接受 skipped。选中的升级必须成功。旧运行被取消后，汇总门禁不会再分配 runner；任务内部的必要清理和诊断仍保留 `always()`。升级发布继续检查全矩阵和证据文件，不能用 CI 路径判定替代发布验收。
 
 升级证据收集在普通 case 失败后仍执行，缺失或失败的证据无法通过；整个运行被取消后停止。Harness Acceptance 显式检查 validate 成功及取消状态，跳过重复的子流程范围检测不会连带跳过 SQLite/OceanBase 验收矩阵。
 
