@@ -48,8 +48,9 @@ else:
     python = args[args.index('--python') + 1]
     site = pathlib.Path(subprocess.check_output(
         [python, '-I', '-c', 'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
-    if args[-1].endswith(']'):
-        extras = args[-1].split('[')[1].removesuffix(']')
+    if args[-1].endswith((']', '.whl')):
+        extras = args[-1].split('[')[1].removesuffix(']') if args[-1].endswith(']') else 'core'
+        assert extras != 'core' or args[-1].endswith('.whl')
         (site / 'installed_role.py').write_text('ROLE = ' + repr(extras))
     else:
         for name in ('sqlalchemy', 'fastapi'):
@@ -100,7 +101,7 @@ if role == os.environ.get('FAIL_ROLE') and attempt == int(os.environ.get('FAIL_A
     return [sys.executable, str(SCRIPT), "--wheel", str(wheel), "--smoke-script", str(smoke)]
 
 
-@pytest.mark.parametrize(("failed_role", "failed_attempt"), [("", 1), ("builtin", 1), ("cli", 2)])
+@pytest.mark.parametrize(("failed_role", "failed_attempt"), [("", 1), ("core", 1), ("builtin", 1), ("cli", 2)])
 def test_batch_keeps_all_roles_isolated_and_reports_every_failure(
     installation_probe, tmp_path, failed_role, failed_attempt
 ):
@@ -125,15 +126,15 @@ def test_batch_keeps_all_roles_isolated_and_reports_every_failure(
     report = json.loads((output / "summary.json").read_text())
     assert report["status"] == ("failure" if failed_role else "success")
     roles = {row["extras"]: row for row in report["roles"]}
-    assert set(roles) == {"builtin", "cli", "builtin,cli", "server,cli"}
+    assert set(roles) == {"core", "builtin", "cli", "builtin,cli", "server,cli"}
     for role, row in roles.items():
         assert row["status"] == ("failure" if role == failed_role else "success")
         assert all(stage["status"] == "success" for stage in row["stages"]) == (role != failed_role)
         assert (output / "logs" / f"{role.replace(',', '-')}.log").is_file()
     records = [json.loads(line) for line in evidence.read_text().splitlines()]
     assert {record["role"] for record in records} == set(roles)
-    assert len({record["venv"] for record in records}) == 4
-    assert len({record["cwd"] for record in records}) == 4
+    assert len({record["venv"] for record in records}) == 5
+    assert len({record["cwd"] for record in records}) == 5
     assert [record["attempt"] for record in records if record["role"] == "cli"] == [1, 2]
     assert all(role in (output / "summary.md").read_text() for role in roles)
 

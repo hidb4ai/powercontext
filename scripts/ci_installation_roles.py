@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROLES = ("builtin", "cli", "builtin,cli", "server,cli")
+ROLES = ("core", "builtin", "cli", "builtin,cli", "server,cli")
 
 
 def write_summary(output: Path, report: dict[str, Any]) -> None:
@@ -68,9 +68,10 @@ def run_roles(*, wheel: Path, python: Path, smoke_script: Path, output: Path, uv
         temporary.mkdir()
         environment.update(TMPDIR=str(temporary), TEMP=str(temporary), TMP=str(temporary), NO_COLOR="1")
         executable = root / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        requirement = str(wheel) if extras == "core" else f"{wheel}[{extras}]"
         commands = [
             ("create environment", [uv, "--no-config", "venv", "--python", str(python), str(root / "venv")]),
-            ("install wheel", [uv, "--no-config", "pip", "install", "--python", str(executable), f"{wheel}[{extras}]"]),
+            ("install wheel", [uv, "--no-config", "pip", "install", "--python", str(executable), requirement]),
             ("role smoke", [str(executable), "-I", str(smoke_script), extras]),
         ]
         if extras == "cli":
